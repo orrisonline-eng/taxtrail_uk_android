@@ -1,0 +1,9 @@
+<!-- PATH: android/app/src/debug/AndroidManifest.xml -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.media_sorter">
+
+    <!-- Debug-only: enables Dart VM service / hot reload -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application android:usesCleartextTraffic="true" />
+</manifest>
