@@ -1,113 +1,113 @@
 // lib/main.dart
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart';
-import 'dart:ui' as ui;
+import 'package:permission_handler/permission_handler.dart';
 
 void main() {
-  runApp(MediaSorterApp());
+  runApp(const TaxTrailApp());
 }
 
-class MediaSorterApp extends StatelessWidget {
+class TaxTrailApp extends StatelessWidget {
+  const TaxTrailApp({super.key});
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Media Sorter',
-      home: MediaSorterScreen(),
+    return const MaterialApp(
+      title: 'TaxTrail',
+      home: TaxTrailHome(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class MediaSorterScreen extends StatefulWidget {
+class TaxTrailHome extends StatefulWidget {
+  const TaxTrailHome({super.key});
+
   @override
-  _MediaSorterScreenState createState() => _MediaSorterScreenState();
+  State<TaxTrailHome> createState() => _TaxTrailHomeState();
 }
 
-class _MediaSorterScreenState extends State<MediaSorterScreen> {
+class _TaxTrailHomeState extends State<TaxTrailHome> {
   final TextEditingController _labelController = TextEditingController();
-  final GlobalKey _previewContainer = GlobalKey();
   String? _lastSavedImagePath;
 
   @override
   void initState() {
     super.initState();
-    _requestStoragePermission();
-  }
-
-  Future<void> _requestStoragePermission() async {
-    if (Platform.isAndroid) {
-      await Permission.manageExternalStorage.request();
-      await Permission.storage.request();
-    }
-  }
-
-  String _getUKFiscalQuarterFolderName(DateTime now) {
-    int fiscalYear = now.year;
-    if (now.isBefore(DateTime(now.year, 4, 6))) {
-      fiscalYear--; // UK tax year starts April 6
-    }
-
-    int month = now.month;
-    int day = now.day;
-    int adjustedMonth =
-        (month < 4 || (month == 4 && day < 6)) ? month + 12 : month;
-
-    int quarter = ((adjustedMonth - 4) ~/ 3) + 1;
-    return 'Q${quarter}_$fiscalYear';
+    _lastSavedImagePath = null; // Ensures no image is preloaded
   }
 
   Future<void> _captureAndSaveImage() async {
-    try {
-      RenderRepaintBoundary boundary = _previewContainer.currentContext!
-          .findRenderObject() as RenderRepaintBoundary;
-      var image = await boundary.toImage();
-      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      Uint8List pngBytes = byteData!.buffer.asUint8List();
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.camera);
 
-      DateTime now = DateTime.now();
-      String fiscalFolder = _getUKFiscalQuarterFolderName(now);
-      String label = _labelController.text.trim().replaceAll(' ', '_');
-      String fileName =
-          'receipt_${label}_${now.toIso8601String().replaceAll(':', '-')}.png';
+    if (pickedFile == null) return;
 
-      Directory baseDir;
+    final now = DateTime.now();
+    final fiscalInfo = _getFiscalQuarter(now);
+    final label = _labelController.text.trim().isEmpty
+        ? 'receipt'
+        : _labelController.text.trim();
+    final fileName =
+        '${label}_${DateFormat("yyyy-MM-ddTHH-mm-ss").format(now)}.png';
 
-      if (Platform.isAndroid) {
-        baseDir = Directory('/storage/emulated/0/Download');
-      } else {
-        baseDir = await getApplicationDocumentsDirectory();
-      }
+    final dir =
+        await getApplicationDocumentsDirectory(); // Even safer, works on Android and iOS
+    final saveDir = Directory(
+        '${dir.path}/UK/${fiscalInfo['quarter']} ${fiscalInfo['year']}');
 
-      final saveDir = Directory('${baseDir.path}/$fiscalFolder');
-      if (!await saveDir.exists()) {
-        await saveDir.create(recursive: true);
-      }
-
-      final file = File('${saveDir.path}/$fileName');
-      await file.writeAsBytes(pngBytes);
-      setState(() {
-        _lastSavedImagePath = file.path;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to: ${file.path}')),
-      );
-    } catch (e) {
-      print('Error capturing and saving image: $e');
+    if (!await saveDir.exists()) {
+      await saveDir.create(recursive: true);
     }
+
+    final savedImage =
+        await File(pickedFile.path).copy('${saveDir.path}/$fileName');
+
+    setState(() {
+      _lastSavedImagePath = savedImage.path;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Saved to: ${savedImage.path}')),
+    );
+  }
+
+  Map<String, dynamic> _getFiscalQuarter(DateTime date) {
+    int year = date.year;
+    final int month = date.month;
+    final int day = date.day;
+
+    // Adjust for UK fiscal year starting April 6
+    if (month < 4 || (month == 4 && day < 6)) {
+      year -= 1;
+    }
+
+    late String quarter;
+    if (month >= 4 && month <= 6 && !(month == 4 && day < 6)) {
+      quarter = 'QTR 1';
+    } else if (month >= 7 && month <= 9) {
+      quarter = 'QTR 2';
+    } else if (month >= 10 && month <= 12) {
+      quarter = 'QTR 3';
+    } else {
+      quarter = 'QTR 4';
+    }
+
+    return {'year': year, 'quarter': quarter};
   }
 
   Future<void> _shareLastImage() async {
     if (_lastSavedImagePath != null) {
-      await Share.shareXFiles([XFile(_lastSavedImagePath!)]);
+      await Share.shareXFiles(
+  [XFile(_lastSavedImagePath!, mimeType: 'image/png')],
+);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No image to share yet.')),
+        const SnackBar(content: Text('No image to share.')),
       );
     }
   }
@@ -115,41 +115,35 @@ class _MediaSorterScreenState extends State<MediaSorterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Media Sorter')),
+      backgroundColor: const Color(0xFFF7F7F7),
+      appBar: AppBar(
+        title: const Text('TaxTrail'),
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.black,
+      ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             TextField(
               controller: _labelController,
-              decoration: InputDecoration(labelText: 'Enter a label'),
-              onChanged: (_) => setState(() {}),
-            ),
-            SizedBox(height: 20),
-            RepaintBoundary(
-              key: _previewContainer,
-              child: Container(
-                padding: EdgeInsets.all(16),
-                color: Colors.amber,
-                child: Text(
-                  _labelController.text,
-                  style: TextStyle(fontSize: 24),
-                ),
+              decoration: const InputDecoration(
+                labelText: 'Enter a label',
+                border: OutlineInputBorder(),
               ),
             ),
-            SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                  onPressed: _captureAndSaveImage,
-                  child: Text('Capture & Save'),
-                ),
-                ElevatedButton(
-                  onPressed: _shareLastImage,
-                  child: Text('Share Last Image'),
-                ),
-              ],
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _captureAndSaveImage,
+              child: const Text('Capture & Save'),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: _shareLastImage,
+              child: const Text('Share Last Image'),
             ),
           ],
         ),

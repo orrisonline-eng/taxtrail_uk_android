@@ -9,11 +9,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  image_picker: ^1.0.4
   path_provider: ^2.1.4
   share_plus: ^7.2.1
-  cross_file: ^0.3.4+2  # transient dep of share_plus, kept explicit for clarity
-  permission_handler: ^11.0.1
   intl: ^0.18.1
+  permission_handler: ^11.3.0
   
 dev_dependencies:
   flutter_test:
