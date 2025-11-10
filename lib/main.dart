@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:open_file/open_file.dart';
 import 'package:csv/csv.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() {
   runApp(const MyApp());
@@ -20,7 +21,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'TaxTrail Receipt Manager'),
+      home: const MyHomePage(title: 'Welcome to Taxtrail'),
     );
   }
 }
@@ -79,11 +80,7 @@ class _MyHomePageState extends State<MyHomePage> {
       final receiptType = labelData['receiptType']!.replaceAll(' ', '_');
       final fileName = '${receiptType}_$timestamp.jpg';
 
-      final directory = Directory('/storage/emulated/0/Download');
-      if (!directory.existsSync()) {
-        directory.createSync(recursive: true);
-      }
-
+      final directory = await getApplicationDocumentsDirectory();
       final savedImagePath = '${directory.path}/$fileName';
       await File(pickedFile.path).copy(savedImagePath);
 
@@ -218,7 +215,7 @@ class _MyHomePageState extends State<MyHomePage> {
       }
 
       String csv = const ListToCsvConverter().convert(rows);
-      final directory = Directory('/storage/emulated/0/Download');
+      final directory = await getApplicationDocumentsDirectory();
       final csvPath = '${directory.path}/taxtrail_receipts.csv';
 
       await File(csvPath).writeAsString(csv);
@@ -249,6 +246,20 @@ class _MyHomePageState extends State<MyHomePage> {
     await OpenFile.open(_lastSavedImagePath!);
   }
 
+  Future<void> _shareCSV() async {
+    final directory = await getApplicationDocumentsDirectory(); // iOS-safe path
+    final csvPath = '${directory.path}/taxtrail_receipts.csv';
+    final file = File(csvPath);
+
+    if (await file.exists()) {
+      await Share.shareXFiles([XFile(csvPath)]);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('CSV file not found')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -256,41 +267,72 @@ class _MyHomePageState extends State<MyHomePage> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton.icon(
-              onPressed: _captureAndSaveImage,
-              icon: const Icon(Icons.camera_alt),
-              label: const Text('Capture and Save Image'),
-              style: ElevatedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16.0),
+            child: Text(
+              'Taxtrail Record Manager',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: _shareLastImage,
-              icon: const Icon(Icons.share),
-              label: const Text('Share Last Image'),
-              style: ElevatedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-              ),
+          ),
+          ElevatedButton.icon(
+            onPressed: _captureAndSaveImage,
+            icon: const Icon(Icons.camera_alt),
+            label: const Text('Capture and Save Image'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
             ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: _openLastImage,
-              icon: const Icon(Icons.folder_open),
-              label: const Text('Open Last Image'),
-              style: ElevatedButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-              ),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: _shareLastImage,
+            icon: const Icon(Icons.share),
+            label: const Text('Share Last Image'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: _openLastImage,
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Open Last Image'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            ),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: _shareCSV,
+            icon: const Icon(Icons.table_chart),
+            label: const Text('Share CSV File'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            ),
+          ),
+          const Divider(),
+          Expanded(
+            child: _receipts.isEmpty
+                ? const Center(
+                    child: Text('No receipts yet. Tap "Capture" to add one!'),
+                  )
+                : ListView.builder(
+                    itemCount: _receipts.length,
+                    itemBuilder: (context, index) {
+                      final receipt = _receipts[index];
+                      return ListTile(
+                        title: Text(receipt.filename),
+                        subtitle: Text('${receipt.amount} - ${receipt.date}'),
+                        leading: const Icon(Icons.receipt),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
