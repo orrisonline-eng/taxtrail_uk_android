@@ -1,149 +1,293 @@
-// lib/main.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:intl/intl.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:open_file/open_file.dart';
+import 'package:csv/csv.dart';
 
 void main() {
-  runApp(const TaxTrailApp());
+  runApp(const MyApp());
 }
 
-class TaxTrailApp extends StatelessWidget {
-  const TaxTrailApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       title: 'TaxTrail',
-      home: TaxTrailHome(),
-      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+      ),
+      home: const MyHomePage(title: 'TaxTrail Receipt Manager'),
     );
   }
 }
 
-class TaxTrailHome extends StatefulWidget {
-  const TaxTrailHome({super.key});
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key, required this.title});
+  final String title;
 
   @override
-  State<TaxTrailHome> createState() => _TaxTrailHomeState();
+  State<MyHomePage> createState() => _MyHomePageState();
 }
 
-class _TaxTrailHomeState extends State<TaxTrailHome> {
-  final TextEditingController _labelController = TextEditingController();
-  String? _lastSavedImagePath;
+class Receipt {
+  final String filename;
+  final String receiptType;
+  final String amount;
+  final String date;
+  final String otherInfo;
+  final String taxReference;
 
-  @override
-  void initState() {
-    super.initState();
-    _lastSavedImagePath = null; // Ensures no image is preloaded
-  }
+  Receipt({
+    required this.filename,
+    required this.receiptType,
+    required this.amount,
+    required this.date,
+    required this.otherInfo,
+    this.taxReference = '',
+  });
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  final ImagePicker _picker = ImagePicker();
+  String? _lastSavedImagePath;
+  final List<Receipt> _receipts = [];
 
   Future<void> _captureAndSaveImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.camera);
+    try {
+      final XFile? pickedFile = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85,
+      );
 
-    if (pickedFile == null) return;
+      if (pickedFile == null) return;
 
-    final now = DateTime.now();
-    final fiscalInfo = _getFiscalQuarter(now);
-    final label = _labelController.text.trim().isEmpty
-        ? 'receipt'
-        : _labelController.text.trim();
-    final fileName =
-        '${label}_${DateFormat("yyyy-MM-ddTHH-mm-ss").format(now)}.png';
+      Map<String, String>? labelData = await _showLabelDialog();
+      if (labelData == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Image capture cancelled')),
+          );
+        }
+        return;
+      }
 
-    final dir =
-        await getApplicationDocumentsDirectory(); // Even safer, works on Android and iOS
-    final saveDir = Directory(
-        '${dir.path}/UK/${fiscalInfo['quarter']} ${fiscalInfo['year']}');
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final receiptType = labelData['receiptType']!.replaceAll(' ', '_');
+      final fileName = '${receiptType}_$timestamp.jpg';
 
-    if (!await saveDir.exists()) {
-      await saveDir.create(recursive: true);
+      final directory = Directory('/storage/emulated/0/Download');
+      if (!directory.existsSync()) {
+        directory.createSync(recursive: true);
+      }
+
+      final savedImagePath = '${directory.path}/$fileName';
+      await File(pickedFile.path).copy(savedImagePath);
+
+      final receipt = Receipt(
+        filename: fileName,
+        receiptType: labelData['receiptType']!,
+        amount: labelData['amount']!,
+        date: labelData['date']!,
+        otherInfo: labelData['otherInfo']!,
+      );
+
+      setState(() {
+        _lastSavedImagePath = savedImagePath;
+        _receipts.add(receipt);
+      });
+
+      await _exportToCSV();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Image saved: $fileName')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
     }
+  }
 
-    final savedImage =
-        await File(pickedFile.path).copy('${saveDir.path}/$fileName');
+  Future<Map<String, String>?> _showLabelDialog() async {
+    final typeController = TextEditingController();
+    final amountController = TextEditingController();
+    final dateController = TextEditingController(
+      text: DateTime.now().toString().split(' ')[0],
+    );
+    final otherController = TextEditingController();
 
-    setState(() {
-      _lastSavedImagePath = savedImage.path;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Saved to: ${savedImage.path}')),
+    return showDialog<Map<String, String>>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Receipt Information'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: typeController,
+                  decoration: const InputDecoration(
+                    labelText: 'Receipt Type',
+                    hintText: 'e.g., Meal, Transport, Office',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: amountController,
+                  decoration: const InputDecoration(
+                    labelText: 'Amount',
+                    hintText: 'e.g., 25.50',
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: dateController,
+                  decoration: const InputDecoration(
+                    labelText: 'Date',
+                    hintText: 'YYYY-MM-DD',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: otherController,
+                  decoration: const InputDecoration(
+                    labelText: 'Other Info',
+                    hintText: 'Notes, vendor, etc.',
+                  ),
+                  maxLines: 2,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop({
+                  'receiptType': typeController.text.isEmpty
+                      ? 'unlabeled'
+                      : typeController.text,
+                  'amount': amountController.text,
+                  'date': dateController.text,
+                  'otherInfo': otherController.text,
+                });
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
     );
   }
 
-  Map<String, dynamic> _getFiscalQuarter(DateTime date) {
-    int year = date.year;
-    final int month = date.month;
-    final int day = date.day;
+  Future<void> _exportToCSV() async {
+    try {
+      List<List<dynamic>> rows = [
+        [
+          'Tax Reference',
+          'Filename',
+          'Receipt_Type',
+          'Amount',
+          'Date',
+          'Other Info'
+        ]
+      ];
 
-    // Adjust for UK fiscal year starting April 6
-    if (month < 4 || (month == 4 && day < 6)) {
-      year -= 1;
+      for (var receipt in _receipts) {
+        rows.add([
+          receipt.taxReference,
+          receipt.filename,
+          receipt.receiptType,
+          receipt.amount,
+          receipt.date,
+          receipt.otherInfo,
+        ]);
+      }
+
+      String csv = const ListToCsvConverter().convert(rows);
+      final directory = Directory('/storage/emulated/0/Download');
+      final csvPath = '${directory.path}/taxtrail_receipts.csv';
+
+      await File(csvPath).writeAsString(csv);
+    } catch (e) {
+      print('CSV Export Error: $e');
     }
-
-    late String quarter;
-    if (month >= 4 && month <= 6 && !(month == 4 && day < 6)) {
-      quarter = 'QTR 1';
-    } else if (month >= 7 && month <= 9) {
-      quarter = 'QTR 2';
-    } else if (month >= 10 && month <= 12) {
-      quarter = 'QTR 3';
-    } else {
-      quarter = 'QTR 4';
-    }
-
-    return {'year': year, 'quarter': quarter};
   }
 
   Future<void> _shareLastImage() async {
-    if (_lastSavedImagePath != null) {
-      await Share.shareXFiles(
-  [XFile(_lastSavedImagePath!, mimeType: 'image/png')],
-);
-    } else {
+    if (_lastSavedImagePath == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No image to share.')),
+        const SnackBar(content: Text('No image to share')),
       );
+      return;
     }
+
+    await Share.shareXFiles([XFile(_lastSavedImagePath!)]);
+  }
+
+  Future<void> _openLastImage() async {
+    if (_lastSavedImagePath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No image to open')),
+      );
+      return;
+    }
+
+    await OpenFile.open(_lastSavedImagePath!);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7),
       appBar: AppBar(
-        title: const Text('TaxTrail'),
-        centerTitle: true,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        foregroundColor: Colors.black,
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        title: Text(widget.title),
       ),
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+      body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            TextField(
-              controller: _labelController,
-              decoration: const InputDecoration(
-                labelText: 'Enter a label',
-                border: OutlineInputBorder(),
+            ElevatedButton.icon(
+              onPressed: _captureAndSaveImage,
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Capture and Save Image'),
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
               ),
             ),
             const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _captureAndSaveImage,
-              child: const Text('Capture & Save'),
-            ),
-            const SizedBox(height: 10),
-            ElevatedButton(
+            ElevatedButton.icon(
               onPressed: _shareLastImage,
-              child: const Text('Share Last Image'),
+              icon: const Icon(Icons.share),
+              label: const Text('Share Last Image'),
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _openLastImage,
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Open Last Image'),
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
             ),
           ],
         ),

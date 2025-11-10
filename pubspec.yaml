@@ -14,7 +14,9 @@ dependencies:
   share_plus: ^7.2.1
   intl: ^0.18.1
   permission_handler: ^11.3.0
-  
+  open_file: ^3.3.2
+  csv: ^5.1.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
