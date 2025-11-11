@@ -16,6 +16,7 @@ dependencies:
   permission_handler: ^11.3.0
   open_file: ^3.3.2
   csv: ^5.1.1
+  shared_preferences: ^2.2.2 
 
 dev_dependencies:
   flutter_test:

@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:open_file/open_file.dart';
 import 'package:csv/csv.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const MyApp());
@@ -56,6 +57,23 @@ class _MyHomePageState extends State<MyHomePage> {
   final ImagePicker _picker = ImagePicker();
   String? _lastSavedImagePath;
   final List<Receipt> _receipts = [];
+  final TextEditingController _taxRefController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTaxReference();
+  }
+
+  Future<void> _loadTaxReference() async {
+    final prefs = await SharedPreferences.getInstance();
+    _taxRefController.text = prefs.getString('tax_reference') ?? '';
+  }
+
+  void _saveTaxReference(String value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('tax_reference', value);
+  }
 
   Future<void> _captureAndSaveImage() async {
     try {
@@ -90,6 +108,7 @@ class _MyHomePageState extends State<MyHomePage> {
         amount: labelData['amount']!,
         date: labelData['date']!,
         otherInfo: labelData['otherInfo']!,
+        taxReference: _taxRefController.text,
       );
 
       setState(() {
@@ -269,6 +288,21 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
       body: Column(
         children: [
+          Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: TextField(
+              controller: _taxRefController,
+              decoration: const InputDecoration(
+                labelText: 'Tax Reference',
+                hintText: 'Enter your tax reference',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) {
+                _saveTaxReference(value);
+              },
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16.0),
             child: Text(
