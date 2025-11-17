@@ -10,7 +10,7 @@
 
     <application
         android:name="${applicationName}"
-        android:label="Media Sorter"
+        android:label="TaxTrail"
         android:icon="@mipmap/ic_launcher">
         android:requestLegacyExternalStorage="true"
 
