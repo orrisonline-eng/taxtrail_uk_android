@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
 
+
 void main() {
   runApp(const MyApp());
 }
@@ -283,29 +284,6 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  Future<void> _shareLastImageAndCSV() async {
-    if (_lastSavedImagePath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No image to share')),
-      );
-      return;
-    }
-    final directory = await getApplicationDocumentsDirectory();
-    final csvPath = '${directory.path}/taxtrail_receipts.csv';
-    final csvFile = File(csvPath);
-    if (!await csvFile.exists()) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('CSV file not found')),
-      );
-      return;
-    }
-
-    await Share.shareXFiles(
-      [XFile(_lastSavedImagePath!), XFile(csvPath)],
-      text: 'Here is my latest receipt image and CSV export.',
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -371,15 +349,6 @@ class _MyHomePageState extends State<MyHomePage> {
             onPressed: _shareCSV,
             icon: const Icon(Icons.table_chart),
             label: const Text('Share CSV File'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-            ),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: _shareLastImageAndCSV,
-            icon: const Icon(Icons.attach_file),
-            label: const Text('Share Last Image + CSV'),
             style: ElevatedButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
             ),
