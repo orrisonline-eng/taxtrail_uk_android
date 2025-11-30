@@ -18,6 +18,7 @@ dependencies:
   csv: ^5.1.1
   shared_preferences: ^2.2.2
   screenshot: ^3.0.0
+  purchases_flutter: ^9.9.9
  
 
 dev_dependencies:

@@ -6,21 +6,28 @@ import 'package:open_file/open_file.dart';
 import 'package:csv/csv.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'dart:typed_data';
 import 'package:flutter/services.dart';
+import 'package:purchases_flutter/purchases_flutter.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Purchases.configure(
+    PurchasesConfiguration(
+      "test_PKlicjFvyfeLnhrqqYsutzEyIzd", // Your RevenueCat API key
+    ),
+  );
+
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'TaxTrail',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
@@ -33,7 +40,6 @@ class MyApp extends StatelessWidget {
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
   final String title;
-
   @override
   State<MyHomePage> createState() => _MyHomePageState();
 }
@@ -62,10 +68,134 @@ class _MyHomePageState extends State<MyHomePage> {
   final List<Receipt> _receipts = [];
   final TextEditingController _taxRefController = TextEditingController();
 
+  bool _isProUser = false;
+  bool _checkedProStatus = false;
+
   @override
   void initState() {
     super.initState();
+    _initializeRevenueCat();
     _loadTaxReference();
+    _checkProStatus();
+  }
+
+  Future<void> _initializeRevenueCat() async {
+    try {
+      await Purchases.setLogLevel(LogLevel.debug);
+      _fetchOfferings();
+    } catch (e) {
+      print('RevenueCat initialization failed: $e');
+    }
+  }
+
+  Future<void> _fetchOfferings() async {
+    try {
+      Offerings offerings = await Purchases.getOfferings();
+      if (offerings.current != null &&
+          offerings.current!.availablePackages.isNotEmpty) {
+        Package package = offerings.current!.availablePackages[0];
+        print('Package identifier: ${package.identifier}');
+        print('Price: ${package.storeProduct.priceString}');
+      } else {
+        print('No available packages');
+      }
+    } catch (e) {
+      print('Error fetching offerings: $e');
+    }
+  }
+
+  Future<void> _checkProStatus() async {
+    try {
+      CustomerInfo customerInfo = await Purchases.getCustomerInfo();
+      setState(() {
+        _isProUser =
+            customerInfo.entitlements.all['taxtrail_pro']?.isActive == true;
+        _checkedProStatus = true;
+      });
+    } catch (e) {
+      setState(() {
+        _isProUser = false;
+        _checkedProStatus = true;
+      });
+    }
+  }
+
+  Future<void> _purchasePackage(Package package) async {
+    try {
+      await Purchases.purchasePackage(package);
+      await _checkProStatus();
+      if (_isProUser && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Purchase successful! Taxtrail Pro activated!')),
+        );
+      }
+    } on PlatformException catch (e) {
+      var errorCode = PurchasesErrorHelper.getErrorCode(e);
+      if (errorCode != PurchasesErrorCode.purchaseCancelledError) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Purchase failed: ${e.message}')),
+          );
+        }
+      } else {
+        print('Purchase was cancelled by user');
+      }
+    } catch (e) {
+      print('Purchase error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Purchase failed: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _triggerPurchase() async {
+    try {
+      Offerings offerings = await Purchases.getOfferings();
+      if (offerings.current != null &&
+          offerings.current!.availablePackages.isNotEmpty) {
+        Package package = offerings.current!.availablePackages[0];
+        await _purchasePackage(package);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No packages available for purchase')),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error triggering purchase: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error starting purchase: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _restorePurchases() async {
+    try {
+      await Purchases.restorePurchases();
+      await _checkProStatus();
+      if (_isProUser && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Purchases restored! Taxtrail Pro is active.')),
+        );
+      } else if (!_isProUser && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No previous purchases to restore.')),
+        );
+      }
+    } catch (e) {
+      print('Restore purchases error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Restore failed: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _loadTaxReference() async {
@@ -270,7 +400,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<void> _shareCSV() async {
-    final directory = await getApplicationDocumentsDirectory(); // iOS-safe path
+    final directory = await getApplicationDocumentsDirectory();
     final csvPath = '${directory.path}/taxtrail_receipts.csv';
     final file = File(csvPath);
 
@@ -308,101 +438,171 @@ class _MyHomePageState extends State<MyHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    // While loading status, show progress spinner
+    if (!_checkedProStatus) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // If not Pro, show paywall
+    if (!_isProUser) {
+      return Scaffold(
+        appBar: AppBar(
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+          title: const Text('TaxTrail'),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.workspace_premium, size: 70, color: Colors.amber),
+                const SizedBox(height: 16),
+                const Text(
+                  'Unlock TaxTrail Pro to use the app!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: _triggerPurchase,
+                  icon: const Icon(Icons.payment),
+                  label: const Text('Purchase TaxTrail Pro'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: _restorePurchases,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Restore Purchases'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                const Text(
+                  'Already purchased? Tap "Restore Purchases".',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    // Pro user: main UI
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: TextField(
-              controller: _taxRefController,
-              decoration: const InputDecoration(
-                labelText: 'Tax Reference',
-                hintText: 'Enter your tax reference',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (value) {
-                _saveTaxReference(value);
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16.0),
-            child: Text(
-              'Taxtrail Record Manager',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              child: TextField(
+                controller: _taxRefController,
+                decoration: const InputDecoration(
+                  labelText: 'Tax Reference',
+                  hintText: 'Enter your tax reference',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (value) {
+                  _saveTaxReference(value);
+                },
               ),
             ),
-          ),
-          ElevatedButton.icon(
-            onPressed: _captureAndSaveImage,
-            icon: const Icon(Icons.camera_alt),
-            label: const Text('Capture and Save Image'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16.0),
+              child: Text(
+                'Taxtrail Record Manager',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: _shareLastImage,
-            icon: const Icon(Icons.share),
-            label: const Text('Share Last Image'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            ElevatedButton.icon(
+              onPressed: _captureAndSaveImage,
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Capture and Save Image'),
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: _openLastImage,
-            icon: const Icon(Icons.folder_open),
-            label: const Text('Open Last Image'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _shareLastImage,
+              icon: const Icon(Icons.share),
+              label: const Text('Share Last Image'),
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: _shareCSV,
-            icon: const Icon(Icons.table_chart),
-            label: const Text('Share CSV File'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _openLastImage,
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Open Last Image'),
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: _shareLastImageAndCSV,
-            icon: const Icon(Icons.attach_file),
-            label: const Text('Share Last Image + CSV'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _shareCSV,
+              icon: const Icon(Icons.table_chart),
+              label: const Text('Share CSV File'),
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
             ),
-          ),
-          const Divider(),
-          Expanded(
-            child: _receipts.isEmpty
-                ? const Center(
-                    child: Text('No receipts yet. Tap "Capture" to add one!'),
-                  )
-                : ListView.builder(
-                    itemCount: _receipts.length,
-                    itemBuilder: (context, index) {
-                      final receipt = _receipts[index];
-                      return ListTile(
-                        title: Text(receipt.filename),
-                        subtitle: Text('${receipt.amount} - ${receipt.date}'),
-                        leading: const Icon(Icons.receipt),
-                      );
-                    },
-                  ),
-          ),
-        ],
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _shareLastImageAndCSV,
+              icon: const Icon(Icons.attach_file),
+              label: const Text('Share Last Image + CSV'),
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
+            ),
+            const Divider(),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.4,
+              ),
+              child: _receipts.isEmpty
+                  ? const Center(
+                      child: Text('No receipts yet. Tap "Capture" to add one!'),
+                    )
+                  : ListView.builder(
+                      itemCount: _receipts.length,
+                      itemBuilder: (context, index) {
+                        final receipt = _receipts[index];
+                        return ListTile(
+                          title: Text(receipt.filename),
+                          subtitle: Text('${receipt.amount} - ${receipt.date}'),
+                          leading: const Icon(Icons.receipt),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
